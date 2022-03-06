@@ -1,3 +1,5 @@
+from ssl import SOL_SOCKET
+
 from rich import print
 from rich.prompt import Prompt
 from rich.table import Table
@@ -5,9 +7,10 @@ from rich.table import Table
 from champlistloader import load_some_champs
 from core import Champion, Match, Shape, Team
 
+from socket import AF_INET, SO_REUSEADDR, SOCK_STREAM, gethostname, socket
+
 
 def print_available_champs(champions: dict[Champion]) -> None:
-
     # Create a table containing available champions
     available_champs = Table(title='Available champions')
 
@@ -30,7 +33,6 @@ def input_champion(prompt: str,
                    champions: dict[Champion],
                    player1: list[str],
                    player2: list[str]) -> None:
-
     # Prompt the player to choose a champion and provide the reason why
     # certain champion cannot be selected
     while True:
@@ -47,7 +49,6 @@ def input_champion(prompt: str,
 
 
 def print_match_summary(match: Match) -> None:
-
     EMOJI = {
         Shape.ROCK: ':raised_fist-emoji:',
         Shape.PAPER: ':raised_hand-emoji:',
@@ -58,7 +59,7 @@ def print_match_summary(match: Match) -> None:
     for index, round in enumerate(match.rounds):
 
         # Create a table containing the results of the round
-        round_summary = Table(title=f'Round {index+1}')
+        round_summary = Table(title=f'Round {index + 1}')
 
         # Add columns for each team
         round_summary.add_column("Red",
@@ -91,7 +92,6 @@ def print_match_summary(match: Match) -> None:
 
 
 def main() -> None:
-
     print('\n'
           'Welcome to [bold yellow]Team Local Tactics[/bold yellow]!'
           '\n'
@@ -123,5 +123,21 @@ def main() -> None:
     print_match_summary(match)
 
 
+sock = socket(AF_INET, SOCK_STREAM)
+sock.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+
+sock.bind(('localhost', 1200))
+
+dbSock = socket(AF_INET, SOCK_STREAM)
+dbSock.connect(('localhost', 1201))
+
+connections = []
+
 if __name__ == '__main__':
-    main()
+    sock.listen()
+    print(dbSock.recv(1024))
+    while True:
+        (cs, ip) = sock.accept()
+        connections.append(cs)
+        print(f"Player {len(connections)} connected")
+        cs.send("k".encode())

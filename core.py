@@ -69,6 +69,7 @@ class Champion:
         total = rock + paper + scissors
         self._rock = rock / total
         self._paper = paper / total
+        self._scissors = scissors / total
 
     @property
     def name(self) -> str:
@@ -90,7 +91,7 @@ class Champion:
         r = random()
         if r < self._rock:
             return Shape.ROCK
-        if r < self._paper+self._rock:
+        if r < self._paper + self._rock:
             return Shape.PAPER
         return Shape.SCISSORS
 
@@ -111,11 +112,11 @@ class Champion:
         return (self.name,
                 f'{self._rock:.2f}',
                 f'{self._paper:.2f}',
-                f'{(1-self._rock-self._paper):.2f}')
+                f'{(1 - self._rock - self._paper):.2f}')
 
     def __repr__(self) -> str:
         return (f'{self._name:10}|   {self._rock:.2f}   |   '
-                f'{self._paper:.2f}   |   {(1-self._rock-self._paper):.2f}')
+                f'{self._paper:.2f}   |   {(1 - self._rock - self._paper):.2f}')
 
 
 def pair_throw(red_champ: Champion,
