@@ -1,13 +1,65 @@
-from ssl import SOL_SOCKET
-
 from rich import print
-from rich.prompt import Prompt
+from rich.console import Console
 from rich.table import Table
 
-from champlistloader import load_some_champs
 from core import Champion, Match, Shape, Team
+from socket import AF_INET, SO_REUSEADDR, SOCK_STREAM, socket
+from ssl import SOL_SOCKET
 
-from socket import AF_INET, SO_REUSEADDR, SOCK_STREAM, gethostname, socket
+from enumValues import FINISHED, INPUT, INFO, GET_CHAMPTIONS, GET_HISTORY_FORM_DATABASE, SEND_HISTORY_TO_DATABASE
+
+import pickle
+
+buffer = 10
+
+
+def send_to_player(num, message):
+    connections[num].send(INFO + message.encode() + FINISHED)
+
+
+def send_to_everyone(message):
+    for sock in connections:
+        sock.send(INFO + message.encode() + FINISHED)
+
+
+def request_input(num, message):
+    connections[num].send(INPUT + message.encode() + FINISHED)
+    return recieve_data(num)
+
+
+def recieve_data(num):
+    while True:
+        data = connections[num].recv(1024)
+        if data:
+            return data.decode()
+
+
+def storeMatch(match: Match):
+    print(match)
+    msg = pickle.dumps(match)
+    msg = bytes(f"{len(msg):<{buffer}}", "utf-8") + msg
+    databaseSocket.send(SEND_HISTORY_TO_DATABASE)
+    databaseSocket.send(msg)
+
+
+def getChamps():
+    msg = GET_CHAMPTIONS
+    databaseSocket.send(msg)
+    fullResponse = b""
+    firstIter = True
+    while True:
+        response = databaseSocket.recv(1024)
+        if firstIter:
+            print("Got champs from DB")
+            msglen = int(response[:buffer])
+            firstIter = False
+
+        fullResponse += response
+        if len(fullResponse) - buffer == msglen:
+            print("Got all the champs")
+
+            champs = pickle.loads(fullResponse[buffer:])
+            return champs
 
 
 def print_available_champs(champions: dict[Champion]) -> None:
@@ -25,10 +77,16 @@ def print_available_champs(champions: dict[Champion]) -> None:
     for champion in champions.values():
         available_champs.add_row(*champion.str_tuple)
 
-    print(available_champs)
+    console = Console(force_terminal=False)
+    with console.capture() as capture:
+        console.print(available_champs)
+
+    send_to_everyone(capture.get())
+    print(capture.get())
 
 
-def input_champion(prompt: str,
+def input_champion(playerId: int,
+                   prompt: str,
                    color: str,
                    champions: dict[Champion],
                    player1: list[str],
@@ -36,15 +94,16 @@ def input_champion(prompt: str,
     # Prompt the player to choose a champion and provide the reason why
     # certain champion cannot be selected
     while True:
-        match Prompt.ask(f'[{color}]{prompt}'):
+        match request_input(playerId, f'[{color}]{prompt}'):
             case name if name not in champions:
-                print(f'The champion {name} is not available. Try again.')
+                send_to_player(playerId, f'The champion {name} is not available. Try again.')
             case name if name in player1:
-                print(f'{name} is already in your team. Try again.')
+                send_to_player(playerId, f'{name} is already in your team. Try again.')
             case name if name in player2:
-                print(f'{name} is in the enemy team. Try again.')
+                send_to_player(playerId, f'{name} is in the enemy team. Try again.')
             case _:
                 player1.append(name)
+                send_to_everyone(f"Player {playerId + 1} chose {name}!")
                 break
 
 
@@ -74,31 +133,36 @@ def print_match_summary(match: Match) -> None:
             red, blue = key.split(', ')
             round_summary.add_row(f'{red} {EMOJI[round[key].red]}',
                                   f'{blue} {EMOJI[round[key].blue]}')
-        print(round_summary)
-        print('\n')
+
+        console = Console(force_terminal=False)
+        with console.capture() as capture:
+            console.print(round_summary)
+        send_to_everyone(capture.get())
 
     # Print the score
     red_score, blue_score = match.score
-    print(f'Red: {red_score}\n'
-          f'Blue: {blue_score}')
+    send_to_everyone(f'Red: {red_score}\n'
+                     f'Blue: {blue_score}')
 
     # Print the winner
     if red_score > blue_score:
-        print('\n[red]Red victory! :grin:')
+        send_to_everyone('\nRed won!')
     elif red_score < blue_score:
-        print('\n[blue]Blue victory! :grin:')
+        send_to_everyone('\nBlue won!')
     else:
-        print('\nDraw :expressionless:')
+        send_to_everyone('\nDraw :expressionless:')
+
+    storeMatch(match)
 
 
-def main() -> None:
-    print('\n'
-          'Welcome to [bold yellow]Team Local Tactics[/bold yellow]!'
-          '\n'
-          'Each player choose a champion each time.'
-          '\n')
+def start_game() -> None:
+    send_to_everyone('\n'
+                     'Team Local Tactics!'
+                     '\n'
+                     'Choose a champion one player at a time.'
+                     '\n')
 
-    champions = load_some_champs()
+    champions = getChamps()
     print_available_champs(champions)
     print('\n')
 
@@ -107,8 +171,8 @@ def main() -> None:
 
     # Champion selection
     for _ in range(2):
-        input_champion('Player 1', 'red', champions, player1, player2)
-        input_champion('Player 2', 'blue', champions, player2, player1)
+        input_champion(0, 'Player 1', 'red', champions, player1, player2)
+        input_champion(1, 'Player 2', 'blue', champions, player2, player1)
 
     print('\n')
 
@@ -123,21 +187,54 @@ def main() -> None:
     print_match_summary(match)
 
 
-sock = socket(AF_INET, SOCK_STREAM)
-sock.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+def showHistory():
+    msg = GET_HISTORY_FORM_DATABASE
+    databaseSocket.send(msg)
 
-sock.bind(('localhost', 1200))
+    firstIter = True
+    full = b""
+    while True:
+        response = databaseSocket.recv(1024)
+        if firstIter:
+            msgLen = int(response[:buffer])
+            firstIter = False
+        full += response
 
-dbSock = socket(AF_INET, SOCK_STREAM)
-dbSock.connect(('localhost', 1201))
+        if len(full) - buffer == msgLen:
+            print("Got the match history")
+            matchHistory = pickle.loads(full[buffer:])
+            print(matchHistory)
+
+            break
+
+    console = Console(force_terminal=False)
+    with console.capture() as capture:
+        console.print(matchHistory)
+    return capture.get()
+
 
 connections = []
 
+serverSocket = socket(AF_INET, SOCK_STREAM)
+serverSocket.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+
+serverSocket.bind(('localhost', 1200))
+
+databaseSocket = socket(AF_INET, SOCK_STREAM)
+databaseSocket.connect(('localhost', 1201))
+
 if __name__ == '__main__':
-    sock.listen()
-    print(dbSock.recv(1024))
+    serverSocket.listen()
+    print(databaseSocket.recv(1024))
     while True:
-        (cs, ip) = sock.accept()
-        connections.append(cs)
+        (userConnection, ip) = serverSocket.accept()
+        connections.append(userConnection)
         print(f"Player {len(connections)} connected")
-        cs.send("k".encode())
+
+        userConnection.send(INFO + f"Connected as player {len(connections)}".encode() + FINISHED)
+        userConnection.send(INFO + f"History of games played: \n{showHistory()}".encode() + FINISHED)
+
+        if len(connections) == 2:
+            start_game()
+            serverSocket.close()
+            break
